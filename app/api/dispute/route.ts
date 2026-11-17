@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { disputeSchema } from "@/lib/schemas";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getUser, unauthorizedResponse } from "@/lib/auth";
+import { describeFetchError } from "@/lib/safe-error";
 
 // SECURITY: N8N_DISPUTE_URL and N8N_API_KEY are server-only. They are read here
 // via process.env, never logged and never included in any response.
@@ -57,8 +58,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const url = process.env.N8N_DISPUTE_URL;
-  const apiKey = process.env.N8N_API_KEY;
+  // trim(): a pasted env value often carries a hidden trailing space or newline,
+  // which makes fetch() throw a TypeError.
+  const url = process.env.N8N_DISPUTE_URL?.trim();
+  const apiKey = process.env.N8N_API_KEY?.trim();
   if (!url || !apiKey) {
     console.error("[api/dispute] env vars missing: restart the dev server after editing .env.local");
     return NextResponse.json(GENERIC, { status: 502 });
@@ -81,8 +84,12 @@ export async function POST(request: NextRequest) {
     });
 
     if (!res.ok) {
-      // Server-side log only: status code, never URLs, headers or keys.
-      console.error(`[api/dispute] n8n responded with HTTP ${res.status}`);
+      // Server-side log only (never sent to the browser): status, which server
+      // answered, and the start of its error body. Never log URLs, headers or keys.
+      const snippet = (await res.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 160);
+      console.error(
+        `[api/dispute] n8n responded with HTTP ${res.status} (server: ${res.headers.get("server") ?? "unknown"}) body: ${snippet}`
+      );
       return NextResponse.json(GENERIC, { status: 502 });
     }
 
@@ -90,8 +97,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(data);
   } catch (err) {
     // Network error, timeout (AbortError) or non-JSON body. The browser gets no
-    // details; the server log gets only the error type.
-    console.error(`[api/dispute] request to n8n failed: ${err instanceof Error ? err.name : "unknown"}`);
+    // details; the server log gets only a safe label (never URLs or keys).
+    console.error(`[api/dispute] request to n8n failed: ${describeFetchError(err)}`);
     return NextResponse.json(GENERIC, { status: 502 });
   } finally {
     clearTimeout(timer);

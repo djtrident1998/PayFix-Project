@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getUser, unauthorizedResponse } from "@/lib/auth";
+import { describeFetchError } from "@/lib/safe-error";
 
 // SECURITY: N8N_CASES_URL and N8N_API_KEY are server-only. They are read here
 // via process.env, never logged and never included in any response.
@@ -26,8 +27,9 @@ export async function GET() {
   // Must be logged in (verified with Supabase, not just a cookie check).
   if (!(await getUser())) return unauthorizedResponse();
 
-  const url = process.env.N8N_CASES_URL;
-  const apiKey = process.env.N8N_API_KEY;
+  // trim(): a pasted env value often carries a hidden trailing space or newline.
+  const url = process.env.N8N_CASES_URL?.trim();
+  const apiKey = process.env.N8N_API_KEY?.trim();
   if (!url || !apiKey) {
     console.error("[api/cases] env vars missing: restart the dev server after editing .env.local");
     return NextResponse.json(GENERIC, { status: 502 });
@@ -45,7 +47,10 @@ export async function GET() {
     });
 
     if (!res.ok) {
-      console.error(`[api/cases] n8n responded with HTTP ${res.status}`);
+      const snippet = (await res.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 160);
+      console.error(
+        `[api/cases] n8n responded with HTTP ${res.status} (server: ${res.headers.get("server") ?? "unknown"}) body: ${snippet}`
+      );
       return NextResponse.json(GENERIC, { status: 502 });
     }
 
@@ -62,7 +67,7 @@ export async function GET() {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (err) {
-    console.error(`[api/cases] request to n8n failed: ${err instanceof Error ? err.name : "unknown"}`);
+    console.error(`[api/cases] request to n8n failed: ${describeFetchError(err)}`);
     return NextResponse.json(GENERIC, { status: 502 });
   } finally {
     clearTimeout(timer);
