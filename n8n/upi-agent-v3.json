@@ -1,0 +1,948 @@
+{
+  "name": "Upi Agent  V3",
+  "nodes": [
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Ticket: {{ $('Make Ticket').first().json.ticket_id }}\nIssue type selected: {{ $('Make Ticket').first().json.issue_type }}\nCustomer complaint: {{ $('Make Ticket').first().json.complaint_text }}\n\nPayment facts from Razorpay (trust these over the customer's words):\nPayment ID: {{ $('Make Ticket').first().json.payment_id }}\nFound: {{ $json.payment_found }}\nStatus: {{ $json.payment_status }}\nAmount INR: {{ $json.amount_inr }}\nAlready refunded INR: {{ $json.amount_refunded_inr }}\nMethod: {{ $json.method }}\nDays since payment: {{ $json.days_since_payment }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are a UPI dispute analyst for an Indian payments company.\n1. Call the company_policy tool at least once, searching with the likely dispute type and the payment facts. If the result does not clearly cover the case, search again with different words. Base your decision only on the returned policy text.\n2. Choose the ONE dispute type that fits the payment facts, not only the customer's words: debited_not_credited, duplicate_payment, unauthorized_payment, wrong_amount, service_not_received or other.\n3. Apply that policy section: decide auto_refund only if the section allows auto refund AND amount_inr is within its limit AND days_since_payment is within its time window AND nothing is already refunded. Otherwise decide escalate and set assigned_to to the approver the section names (analyst or senior_compliance).\n4. Decide reject only if the payment facts clearly contradict the claim (for example the customer says it failed but status is captured and nothing else is wrong).\n5. If Found is false, decide escalate, assigned_to analyst.\n6. For duplicate_payment you only see one payment, so you cannot confirm the other charge: decide escalate, assigned_to analyst.\nNever invent data. Copy payment_status and amount_inr from the facts.\npolicy_rule_used: quote the section number and title, for example \"Section 6 – Wrong amount charged\".\nreason: one plain sentence citing the rule. customer_message: two short polite sentences including the ticket ID, promising nothing beyond the decision.\nIf the decision is reject, customer_message must clearly say the dispute is rejected and give the reason."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        976,
+        224
+      ],
+      "id": "97bd61cf-78b0-412f-a00b-6db71aae3c01",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": {
+          "temperature": 0
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        848,
+        560
+      ],
+      "id": "995da1b3-d399-42b4-a14e-e07031dff511",
+      "name": "Google Gemini Chat Model"
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"dispute_type\": \"debited_not_credited\",\n  \"payment_status\": \"failed\",\n  \"amount_inr\": 450,\n  \"policy_rule_used\": \"debited_not_credited: auto refund up to 5000 within 30 days\",\n  \"decision\": \"auto_refund\",\n  \"assigned_to\": \"none\",\n  \"reason\": \"Payment failed, amount is under the 5000 limit and within 30 days.\",\n  \"customer_message\": \"Your dispute DSP-123 is approved. Your refund has been started.\"\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1312,
+        480
+      ],
+      "id": "2f7e6cdd-8d50-439c-9376-3a8220d5e754",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nconst b = $input.first().json.body;\nreturn [{ json: {\n  ticket_id: 'DSP-' + Date.now(),\n  created_at: new Date().toISOString(),\n  customer_name: b.name,\n  email: b.email,\n  payment_id: (b.payment_id || '').trim(),\n  issue_type: b.issue_type,\n  complaint_text: b.complaint_text\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        224
+      ],
+      "id": "ae78388e-9969-4ca3-98a9-5a570d286265",
+      "name": "Make Ticket"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nconst p = $input.first().json;\nconst found = p && p.id && !p.error;\nconst days = found ? Math.floor((Date.now() / 1000 - p.created_at) / 86400) : null;\nreturn [{ json: {\n  payment_found: !!found,\n  payment_status: found ? p.status : 'not_found',\n  amount_inr: found ? p.amount / 100 : 0,\n  amount_refunded_inr: found ? (p.amount_refunded || 0) / 100 : 0,\n  method: found ? p.method : '',\n  vpa: found ? (p.vpa || '') : '',\n  payment_date: found ? new Date(p.created_at * 1000).toISOString() : '',\n  days_since_payment: days\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        592,
+        224
+      ],
+      "id": "7349c0e2-64cd-4d9a-87e1-9bea3e50bbfd",
+      "name": "Prepare Payment"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nconst t = $('Make Ticket').first().json;\nconst a = $input.first().json.output;\nconst statusMap = { auto_refund: 'refund_pending', escalate: 'with_analyst', reject: 'rejected' };\nreturn [{ json: {\n  ticket_id: t.ticket_id,\n  created_at: t.created_at,\n  customer_name: t.customer_name,\n  email: t.email,\n  payment_id: t.payment_id,\n  complaint_text: t.complaint_text,\n  payment_status: a.payment_status,\n  amount_inr: a.amount_inr,\n  dispute_type: a.dispute_type,\n  policy_rule_used: a.policy_rule_used,\n  decision: a.decision,\n  reason: a.reason,\n  refund_id: '',\n  assigned_to: a.assigned_to,\n  status: statusMap[a.decision] || 'with_analyst',\n  customer_message: a.customer_message\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1392,
+        224
+      ],
+      "id": "b480f09d-3c83-4eaa-ae61-ce1009cc8f0b",
+      "name": "Build Case"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "UPI_Dispute_Data",
+          "cachedResultUrl": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1017955669,
+          "mode": "list",
+          "cachedResultName": "cases",
+          "cachedResultUrl": ""
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ticket_id": "={{ $('Build Case').item.json.ticket_id }}",
+            "created_at": "={{ $('Build Case').item.json.created_at }}",
+            "customer_name": "={{ $('Build Case').item.json.customer_name }}",
+            "email": "={{ $('Build Case').item.json.email }}",
+            "payment_id": "={{ $('Build Case').item.json.payment_id }}",
+            "complaint_text": "={{ $('Build Case').item.json.complaint_text }}",
+            "payment_status": "={{ $('Build Case').item.json.payment_status }}",
+            "amount_inr": "={{ $('Build Case').item.json.amount_inr }}",
+            "dispute_type": "={{ $('Build Case').item.json.dispute_type }}",
+            "policy_rule_used": "={{ $('Build Case').item.json.policy_rule_used }}",
+            "decision": "={{ $('Build Case').item.json.decision }}",
+            "reason": "={{ $('Build Case').item.json.reason }}",
+            "refund_id": "={{ $('Build Case').item.json.refund_id }}",
+            "assigned_to": "={{ $('Build Case').item.json.assigned_to }}",
+            "status": "={{ $('Build Case').item.json.status }}",
+            "customer_message": "={{ $('Build Case').item.json.customer_message }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "ticket_id",
+              "displayName": "ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "customer_name",
+              "displayName": "customer_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "payment_id",
+              "displayName": "payment_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "complaint_text",
+              "displayName": "complaint_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "payment_status",
+              "displayName": "payment_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "amount_inr",
+              "displayName": "amount_inr",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "dispute_type",
+              "displayName": "dispute_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "policy_rule_used",
+              "displayName": "policy_rule_used",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "decision",
+              "displayName": "decision",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "refund_id",
+              "displayName": "refund_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "assigned_to",
+              "displayName": "assigned_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "customer_message",
+              "displayName": "customer_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1984,
+        64
+      ],
+      "id": "c3357d82-bc52-4cf3-82b2-82442322d1c1",
+      "name": "Append row in sheet"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 4
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.decision }}",
+                    "rightValue": "auto_refund",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "b26b4518-b099-4597-b1ae-e557a64f8804"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "refund"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 4
+                },
+                "conditions": [
+                  {
+                    "id": "e47d9b46-5b6b-45a6-8976-afcf63801ee9",
+                    "leftValue": "={{ $json.decision }}",
+                    "rightValue": "escalate",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "escalate"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.5,
+      "position": [
+        1680,
+        416
+      ],
+      "id": "9adeebc1-0cf9-48ec-9b60-b9c60f756c17",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.razorpay.com/v1/payments/{{ $json.payment_id }}/refund",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"amount\": {{ $json.amount_inr * 100 }}, \"speed\": \"normal\"}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1984,
+        352
+      ],
+      "id": "b6916e3d-65ac-4a28-82e1-f915ea28f7cd",
+      "name": "Razorpay Refund",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "sendTo": "reviewer@example.com",
+        "subject": "=Escalated dispute {{ $json.ticket_id }} for {{ $json.assigned_to }} ",
+        "message": "=Type: {{ $json.dispute_type }} | Amount: ₹{{ $json.amount_inr }} | Payment: {{ $json.payment_id }} | Reason: {{ $json.reason }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2000,
+        544
+      ],
+      "id": "5b69827b-68a4-4f6e-aa68-d275ff98b8d7",
+      "name": "Alert Reviewer"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "=Your UPI dispute {{ $json.ticket_id }}",
+        "emailType": "text",
+        "message": "=Hi {{ $json.customer_name }}, {{ $json.customer_message }} – UPI Dispute Desk",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1680,
+        64
+      ],
+      "id": "aa8185c5-4719-49b4-987c-fcd4f1a3c7fb",
+      "name": "Reply to Customer"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "UPI_Dispute_Data",
+          "cachedResultUrl": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1017955669,
+          "mode": "list",
+          "cachedResultName": "cases",
+          "cachedResultUrl": ""
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ticket_id": "={{ $('Build Case').item.json.ticket_id }}",
+            "refund_id": "={{ $json.id }}",
+            "status": "={{ $json.id ? 'refunded' : 'refund_failed' }}"
+          },
+          "matchingColumns": [
+            "ticket_id"
+          ],
+          "schema": [
+            {
+              "id": "ticket_id",
+              "displayName": "ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "customer_name",
+              "displayName": "customer_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "payment_id",
+              "displayName": "payment_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "complaint_text",
+              "displayName": "complaint_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "payment_status",
+              "displayName": "payment_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "amount_inr",
+              "displayName": "amount_inr",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "dispute_type",
+              "displayName": "dispute_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "policy_rule_used",
+              "displayName": "policy_rule_used",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "decision",
+              "displayName": "decision",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "refund_id",
+              "displayName": "refund_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "assigned_to",
+              "displayName": "assigned_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "customer_message",
+              "displayName": "customer_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2336,
+        352
+      ],
+      "id": "a6bf57ef-ff97-4c6a-b0b2-fe43de0a53d0",
+      "name": "Mark Refunded"
+    },
+    {
+      "parameters": {
+        "resource": "payment",
+        "paymentId": "={{ $json.payment_id }}",
+        "additionalOptions": {}
+      },
+      "type": "@razorpay/n8n-nodes-razorpay.razorpay",
+      "typeVersion": 1,
+      "position": [
+        416,
+        224
+      ],
+      "id": "da7ce08d-f351-4669-a6e5-e9385b98ce92",
+      "name": "Fetch a payment Razorpay",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolDescription": "Search the company UPI dispute policy. Ask with the dispute type and key facts, e.g. \"wrong amount charged 1500 rupees captured\". Returns the matching policy sections.",
+        "tableName": {
+          "__rl": true,
+          "value": "documents",
+          "mode": "list",
+          "cachedResultName": "documents"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1.4,
+      "position": [
+        992,
+        480
+      ],
+      "id": "e2b2b7b9-3a21-49a1-9c0b-d6d00fce6c61",
+      "name": "Supabase Vector Store"
+    },
+    {
+      "parameters": {},
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        992,
+        688
+      ],
+      "id": "bf0c52d3-6081-40e0-a1b5-695351d87e36",
+      "name": "Embeddings Google Gemini"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dispute",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        224
+      ],
+      "id": "43b8ca7d-e1a4-4ac3-95d5-430a71a20b6a",
+      "name": "Webhook"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({\n  ticket_id: $('Build Case').first().json.ticket_id,\n  decision: $('Build Case').first().json.decision,\n  assigned_to: $('Build Case').first().json.assigned_to,\n  reason: $('Build Case').first().json.reason,\n  policy_rule_used: $('Build Case').first().json.policy_rule_used,\n  customer_message: $('Build Case').first().json.customer_message,\n  payment_status: $('Build Case').first().json.payment_status,\n  amount_inr: $('Build Case').first().json.amount_inr\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2336,
+        64
+      ],
+      "id": "34e4c24c-fbcb-48f1-8cb2-6d5b33aa4122",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "content": "\n\n**PayFix – Dispute Agent (test mode)**\n**Step 1 – Intake**\n1. POST /dispute arrives from the app\n2. Secret header is checked\n3. Ticket ID created (DSP-timestamp)\n4. Payment ID trimmed of extra spaces\nNeeds: Header Auth credential",
+        "height": 352,
+        "width": 400
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -64,
+        48
+      ],
+      "typeVersion": 1,
+      "id": "0783d4ec-dbd4-4088-ae0e-c66fe2f1e508",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "\n**Step 2 – Payment check**\n1. Real payment fetched from Razorpay by ID\n2. Not found? Flow continues, agent escalates\n3. Converts paise to ₹\n4. Calculates days since payment\nNeeds: Razorpay API keys (test mode)",
+        "height": 352,
+        "width": 368
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        384,
+        48
+      ],
+      "typeVersion": 1,
+      "id": "64644db8-214a-4607-acf1-a8cdb9932e27",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "**Step 3 – AI decision**\n1. Agent searches the company policy (Supabase)\n2. Gemini picks auto_refund, escalate or reject\n3. Cites the policy section and the reason\n4. Build Case packs the result for Step 4\nNeeds: Gemini API key, Supabase credential (policy loaded)",
+        "height": 768,
+        "width": 784
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        800,
+        48
+      ],
+      "typeVersion": 1,
+      "id": "43449a78-b7b7-4ee8-8284-3dc62c985732",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n**Step 4 – Act, notify, respond**\n1. auto_refund: Razorpay refund, sheet marked refunded\n2. escalate: reviewer emailed (analyst or senior compliance)\n3. Customer emailed, case logged, app gets the result\n4. Refund amount comes from Razorpay, never the complaint\nNeeds: Razorpay Basic Auth, Gmail, Google Sheets (cases tab)",
+        "height": 768,
+        "width": 976
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1600,
+        48
+      ],
+      "typeVersion": 1,
+      "id": "ad3fa314-abf0-4a11-a587-64b00035e6c2",
+      "name": "Sticky Note3"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make Ticket": {
+      "main": [
+        [
+          {
+            "node": "Fetch a payment Razorpay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Payment": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Build Case",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Case": {
+      "main": [
+        [
+          {
+            "node": "Reply to Customer",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Razorpay Refund",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Alert Reviewer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Razorpay Refund": {
+      "main": [
+        [
+          {
+            "node": "Mark Refunded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to Customer": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch a payment Razorpay": {
+      "main": [
+        [
+          {
+            "node": "Prepare Payment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase Vector Store": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Google Gemini": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Make Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "nodeGroups": [],
+  "tags": []
+}

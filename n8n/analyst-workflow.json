@@ -1,0 +1,130 @@
+{
+  "name": "Analyst WorkFlow",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "cases",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        -16,
+        96
+      ],
+      "id": "1a62b861-947c-4bc8-b870-e6a38cff1fad",
+      "name": "Webhook"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "UPI_Dispute_Data",
+          "cachedResultUrl": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1017955669,
+          "mode": "list",
+          "cachedResultName": "cases",
+          "cachedResultUrl": ""
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        320,
+        96
+      ],
+      "id": "effea021-4d26-4cff-8bb9-b331fc59fca9",
+      "name": "Get row(s) in sheet",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        560,
+        96
+      ],
+      "id": "6570a355-bc02-4f82-845b-fd76b951f085",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "content": "Analyst workflow\n\nSends all dispute cases to the analyst dashboard.\n\nGET /cases → read the Google Sheet → send rows back as JSON\n\nThe Next.js app calls this through its own API route, so the n8n URL never reaches the browser.",
+        "height": 352,
+        "width": 304
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -112,
+        -96
+      ],
+      "typeVersion": 1,
+      "id": "774cd8ea-9aa1-43e0-a914-d2ee43a63557",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "Notes\n\n- Webhook needs the header auth key, otherwise it rejects the call\n- Reads the \"cases\" tab in UPI_Dispute_Data. Rows are added by the main Upi Agent V3 workflow\n- Read only. It doesn't write or refund anything\n- Returns every row as is, the dashboard does the filtering",
+        "height": 352,
+        "width": 528
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        256,
+        -96
+      ],
+      "typeVersion": 1,
+      "id": "b3dbd17b-45a7-4e94-bd6a-289609d05528",
+      "name": "Sticky Note1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "nodeGroups": [],
+  "tags": []
+}

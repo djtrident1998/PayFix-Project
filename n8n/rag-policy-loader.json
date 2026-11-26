@@ -1,0 +1,211 @@
+{
+  "name": "RAG UPI",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -16,
+        80
+      ],
+      "id": "78c968c4-56ba-49f9-913e-7638b178c768",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "YOUR_DOC_ID",
+          "mode": "list",
+          "cachedResultName": "Company_Dispute_Policy_RAG",
+          "cachedResultUrl": ""
+        },
+        "options": {
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "text/plain"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        224,
+        80
+      ],
+      "id": "db6def03-b5a7-4708-9ea3-7910fdc0d57b",
+      "name": "Download file"
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": {
+          "__rl": true,
+          "value": "documents",
+          "mode": "list",
+          "cachedResultName": "documents"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1.4,
+      "position": [
+        592,
+        80
+      ],
+      "id": "275a0456-8a50-4f81-a9eb-cdbae2c3c4d0",
+      "name": "Supabase Vector Store"
+    },
+    {
+      "parameters": {},
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        512,
+        256
+      ],
+      "id": "ed661bca-fe30-446b-b3c8-95c6f086b760",
+      "name": "Embeddings Google Gemini"
+    },
+    {
+      "parameters": {
+        "dataType": "binary",
+        "textSplittingMode": "custom",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "source",
+                "value": "dispute_policy_v2"
+              }
+            ]
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        656,
+        256
+      ],
+      "id": "ee12aaf8-5c2e-4425-a310-2d8d21734e73",
+      "name": "Default Data Loader"
+    },
+    {
+      "parameters": {
+        "chunkSize": 600,
+        "chunkOverlap": 100,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        656,
+        384
+      ],
+      "id": "8af9aaf8-7ecd-4e57-ae0f-77947aa150d5",
+      "name": "Recursive Character Text Splitter"
+    },
+    {
+      "parameters": {
+        "content": "**PayFix – Policy Loader (run on demand)**\n**Step 1 – Get the policy**\n1. Click Execute workflow to start\n2. Downloads the Google Doc \"Company_Dispute_Policy_RAG\" as plain text\nNeeds: Google Drive credential",
+        "height": 368,
+        "width": 464
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -80,
+        -112
+      ],
+      "typeVersion": 1,
+      "id": "4ff4ff33-cceb-45ae-8878-fad03a19f3a9",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "**Step 2 – Split, embed and store**\n1. Splits the policy into chunks (600 characters, overlap 100)\n2. Tags each chunk with source = dispute_policy_v2\n3. Gemini turns each chunk into a vector (3,072 dimensions)\n4. Inserts them into the Supabase \"documents\" table\n5. The dispute agent searches this table (top 4 chunks)\nNeeds: Gemini API key, Supabase credential\nWARNING: Insert adds rows. Run delete from documents; first when you update the policy.",
+        "height": 640,
+        "width": 576
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        400,
+        -112
+      ],
+      "typeVersion": 1,
+      "id": "de706d32-d27e-4c24-954f-3c0ac38a517d",
+      "name": "Sticky Note1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Download file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download file": {
+      "main": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Google Gemini": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recursive Character Text Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Default Data Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "nodeGroups": [],
+  "tags": []
+}
